@@ -17,12 +17,18 @@ import (
 const pluginName = "keystore"
 
 var (
-	generateFlag bool
-	listFlag     bool
-	deleteFlag   string
-	versionFlag  bool
-	ks           keystore.Keystore
+	generateFlag    bool
+	postquantumFlag bool
+	listFlag        bool
+	deleteFlag      string
+	versionFlag     bool
+	ks              keystore.Keystore
 )
+
+type KeyType string
+
+const KeyTypeX25519 KeyType = "X25519"
+const KeyTypeHybrid KeyType = "Hybrid"
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `age-plugin-keystore
@@ -30,7 +36,7 @@ func printUsage() {
 An age plugin that stores X25519 private keys in GNOME Keyring.
 
 Usage:
-    age-plugin-keystore -g, --generate       Generate a new key pair
+    age-plugin-keystore -g, --generate [-pq] Generate a new key pair (-pq for post-quantum key)
     age-plugin-keystore -l, --list           List stored keys
     age-plugin-keystore -d, --delete KEYID   Delete a key by ID
     age-plugin-keystore -v, --version        Show version
@@ -47,6 +53,9 @@ Examples:
     # independently and used without the plugin for encryption (only decryption
     # requires the plugin)
     age-plugin-keystore -g > identity.txt 2> recipient.txt
+
+    # Generate a post-quantom hybrid key instead of X25519
+    age-plugin-keystore -g -pq > identity.txt 2> recipient.txt
 
     # List all stored keys
     age-plugin-keystore -l
@@ -70,8 +79,9 @@ func main() {
 	}
 	p.RegisterFlags(nil)
 
-	flag.BoolVar(&generateFlag, "g", false, "Generate a new key pair")
-	flag.BoolVar(&generateFlag, "generate", false, "Generate a new key pair")
+	flag.BoolVar(&generateFlag, "g", false, "Generate a new key pair (pq: post-quantum)")
+	flag.BoolVar(&generateFlag, "generate", false, "Generate a new key pair (pq: post-quantum)")
+	flag.BoolVar(&postquantumFlag, "pq", false, "Generate a post-quantum key pair")
 	flag.BoolVar(&listFlag, "l", false, "List stored keys")
 	flag.BoolVar(&listFlag, "list", false, "List stored keys")
 	flag.StringVar(&deleteFlag, "d", "", "Delete a key by ID")
@@ -86,7 +96,16 @@ func main() {
 	defer ks.Close()
 
 	if generateFlag {
-		os.Exit(keygen())
+		if postquantumFlag {
+			os.Exit(keygen(KeyTypeHybrid))
+		}
+		os.Exit(keygen(KeyTypeX25519))
+	}
+	if postquantumFlag {
+		fmt.Println("error: invalid use of option -pq, it must be use as an option of -g / --generate")
+		fmt.Println()
+		printUsage()
+		os.Exit(0)
 	}
 	if listFlag {
 		os.Exit(list())
@@ -105,45 +124,63 @@ func main() {
 	}
 
 	p.HandleRecipient(func(data []byte) (age.Recipient, error) {
-		recipient, err := age.ParseX25519Recipient(string(data))
-		if err != nil {
-			return nil, fmt.Errorf("cannot parse recipient: %w", err)
+		arg := string(data)
+
+		switch {
+		case strings.HasPrefix(arg, "age1pq1"):
+			return age.ParseHybridRecipient(arg)
+		case strings.HasPrefix(arg, "age1"):
+			return age.ParseX25519Recipient(arg)
+		default:
+			return nil, fmt.Errorf("unknown recipient type: %q", arg)
 		}
-		return recipient, nil
 	})
 
 	p.HandleIdentity(func(data []byte) (age.Identity, error) {
-		return NewIdentity(data)
+		keyID := string(data)
+
+		secret, err := ks.Lookup(keyID)
+		if err != nil {
+			return nil, fmt.Errorf("could not get the secret of key %s: %w", keyID, err)
+		}
+
+		switch {
+		case strings.HasPrefix(secret, "AGE-SECRET-KEY-1"):
+			return age.ParseX25519Identity(secret)
+		case strings.HasPrefix(secret, "AGE-SECRET-KEY-PQ-1"):
+			return age.ParseHybridIdentity(secret)
+		default:
+			return nil, fmt.Errorf("unknown identity type: %q", secret)
+		}
 	})
 
 	os.Exit(p.Main())
 }
 
-// NewIdentity fetch the secret from the keystore and create a new identity with
-// the secret
-func NewIdentity(data []byte) (*age.X25519Identity, error) {
-	keyID := string(data)
+func keygen(key KeyType) int {
+	var recipient string
+	var privatekey string
 
-	secret, err := ks.Lookup(keyID)
-	if err != nil {
-		return nil, fmt.Errorf("could not get the secret of key %s: %w", keyID, err)
+	switch key {
+	case KeyTypeX25519:
+		i, err := age.GenerateX25519Identity()
+		if err != nil {
+			log.Fatalf("failed to generate key pair: %v", err)
+		}
+		recipient = i.Recipient().String()
+		privatekey = i.String()
+
+	case KeyTypeHybrid:
+		i, err := age.GenerateHybridIdentity()
+		if err != nil {
+			log.Fatalf("failed to generate key pair: %v", err)
+		}
+		recipient = i.Recipient().String()
+		privatekey = i.String()
+
+	default:
+		panic("unsupported key type")
 	}
-
-	identity, err := age.ParseX25519Identity(secret)
-	if err != nil {
-		return nil, fmt.Errorf("could not parse identity of key %s: %w", keyID, err)
-	}
-
-	return identity, nil
-}
-
-func keygen() int {
-	identity, err := age.GenerateX25519Identity()
-	if err != nil {
-		log.Fatalf("failed to generate key pair: %v", err)
-	}
-	recipient := identity.Recipient()
-	privatekey := identity.String()
 
 	keyID, err := ks.Store(privatekey)
 	if err != nil {
@@ -153,7 +190,7 @@ func keygen() int {
 	identityStr := plugin.EncodeIdentity(pluginName, []byte(keyID))
 
 	fmt.Fprintf(os.Stderr, "# key ID: %s\n", keyID)
-	fmt.Fprintf(os.Stderr, "%s\n", recipient.String())
+	fmt.Fprintf(os.Stderr, "%s\n", recipient)
 	fmt.Printf("%s\n", strings.ToUpper(identityStr))
 
 	return 0
@@ -172,10 +209,30 @@ func list() int {
 
 	fmt.Fprintf(os.Stderr, "Found %d key(s) in keystore:\n", len(keyIDs))
 	for _, keyID := range keyIDs {
-		identity, err := NewIdentity([]byte(keyID))
+		secret, err := ks.Lookup(keyID)
 		if err != nil {
-			log.Printf("ERROR: %v", err)
+			fmt.Printf("could not get the secret of key %q: %s", keyID, err)
 			continue
+		}
+
+		var recipient string
+		switch {
+		case strings.HasPrefix(secret, "AGE-SECRET-KEY-1"):
+			identity, err := age.ParseX25519Identity(secret)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			recipient = identity.Recipient().String()
+		case strings.HasPrefix(secret, "AGE-SECRET-KEY-PQ-1"):
+			identity, err := age.ParseHybridIdentity(secret)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			recipient = identity.Recipient().String()
+		default:
+			fmt.Printf("unknown identity type: %q", secret)
 		}
 
 		// Rebuild the identity string from the keyID instead of the secret
@@ -183,7 +240,7 @@ func list() int {
 		identityStr := plugin.EncodeIdentity(pluginName, []byte(keyID))
 
 		fmt.Fprintf(os.Stderr, "  Key ID: %s\n", keyID)
-		fmt.Fprintf(os.Stderr, "    Public key: %s\n", identity.Recipient().String())
+		fmt.Fprintf(os.Stderr, "    Public key: %s\n", recipient)
 		fmt.Fprintf(os.Stderr, "    Identity:   %s\n", identityStr)
 	}
 	return 0

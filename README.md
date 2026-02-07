@@ -1,7 +1,7 @@
 # age-plugin-keystore
 
-An [age](https://github.com/FiloSottile/age) plugin that stores X25519 private
-keys in Linux Keyrings using the Secret Service D-Bus API.
+An [age](https://github.com/FiloSottile/age) plugin that stores X25519 or Hybrid
+Post-Quantum private keys in Linux Keyrings using the Secret Service D-Bus API.
 
 ## Overview
 
@@ -11,6 +11,8 @@ API](https://specifications.freedesktop.org/secret-service/latest/) (like the
 GNOME Keyring), allowing you to:
 
 - Generate X25519 key pairs with private keys stored securely in keyring
+- Generate mlkem768x25519 Hybrid Post-Quantum key with private keys stored
+  securely in keyring
 - Encrypt files to keystore recipients
 - Decrypt files using keys retrieved from the keyring automatically
 
@@ -101,6 +103,11 @@ want to share it. But the decryption needs this plugin to be installed.
 Save the identity string to a file:
 ```bash
 age-plugin-keystore -g > identity.txt 2> recipient.txt
+```
+
+For Hybrid Post-Quantum keys, use the `-pq` option
+```bash
+age-plugin-keystore -g -pq >> identity.txt 2>> recipient.txt
 ```
 
 ### Encrypt a File
