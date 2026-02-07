@@ -1,0 +1,36 @@
+name: Build and upload binaries
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {GOOS: linux, GOARCH: amd64}
+          - {GOOS: linux, GOARCH: arm64}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build binary
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          OUTPUT="age-plugin-keystore-${VERSION}-${GOOS}-${GOARCH}"
+          go build -o "$OUTPUT" -trimpath -ldflags="-s -w" .
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.GOOS }}
+          GOARCH: ${{ matrix.GOARCH }}
+      - name: Upload release artifacts
+        run: gh release upload "$GITHUB_REF_NAME" age-plugin-keystore-*
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
