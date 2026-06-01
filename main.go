@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"runtime/debug"
 	"strings"
+	"syscall"
+
+	"golang.org/x/term"
 
 	"filippo.io/age"
 	"filippo.io/age/plugin"
@@ -21,6 +25,7 @@ var (
 	postquantumFlag bool
 	listFlag        bool
 	deleteFlag      string
+	insertFlag      bool
 	versionFlag     bool
 	ks              keystore.Keystore
 )
@@ -29,6 +34,8 @@ type KeyType string
 
 const KeyTypeX25519 KeyType = "X25519"
 const KeyTypeHybrid KeyType = "Hybrid"
+const KeyPrefixX25519 string = "AGE-SECRET-KEY-1"
+const KeyPrefixHybrid string = "AGE-SECRET-KEY-PQ-1"
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `age-plugin-keystore
@@ -39,6 +46,7 @@ Usage:
     age-plugin-keystore -g, --generate [-pq] Generate a new key pair (-pq for post-quantum key)
     age-plugin-keystore -l, --list           List stored keys
     age-plugin-keystore -d, --delete KEYID   Delete a key by ID
+    age-plugin-keystore -i, --insert         Insert a key into the keystore
     age-plugin-keystore -v, --version        Show version
     age-plugin-keystore -h, --help           Show this help
 
@@ -63,6 +71,9 @@ Examples:
     # Delete a key from the keystore
     age-plugin-keystore -d 1234567890abcdef
 
+    # Insert a known key into the keystore
+    echo -n 'AGE-SECRET-KEY-1...' | age-plugin-keystore -i
+
     # Encrypt a file (using the public key printed by -g)
     age -r age1... file.txt > file.txt.age
 
@@ -86,6 +97,8 @@ func main() {
 	flag.BoolVar(&listFlag, "list", false, "List stored keys")
 	flag.StringVar(&deleteFlag, "d", "", "Delete a key by ID")
 	flag.StringVar(&deleteFlag, "delete", "", "Delete a key by ID")
+	flag.BoolVar(&insertFlag, "i", false, "Insert a key in the keystore")
+	flag.BoolVar(&insertFlag, "insert", false, "Insert a key in the keystore")
 	flag.BoolVar(&versionFlag, "v", false, "Show version")
 	flag.BoolVar(&versionFlag, "version", false, "Show version")
 
@@ -112,6 +125,9 @@ func main() {
 	}
 	if deleteFlag != "" {
 		os.Exit(deleteKey(deleteFlag))
+	}
+	if insertFlag {
+		os.Exit(insertKey())
 	}
 	if versionFlag {
 		os.Exit(version())
@@ -145,9 +161,9 @@ func main() {
 		}
 
 		switch {
-		case strings.HasPrefix(secret, "AGE-SECRET-KEY-1"):
+		case strings.HasPrefix(secret, KeyPrefixX25519):
 			return age.ParseX25519Identity(secret)
-		case strings.HasPrefix(secret, "AGE-SECRET-KEY-PQ-1"):
+		case strings.HasPrefix(secret, KeyPrefixHybrid):
 			return age.ParseHybridIdentity(secret)
 		default:
 			return nil, fmt.Errorf("unknown identity type: %q", secret)
@@ -252,6 +268,54 @@ func deleteKey(keyID string) int {
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "Deleted key: %s\n", keyID)
+	return 0
+}
+
+// ReadPassword is a wrapper around term.ReadPassword, it reads the password
+// input without echoing characters to the terminal.
+func ReadKey() (string, error) {
+	var pass []byte
+	var err error
+
+	if term.IsTerminal(int(syscall.Stdin)) {
+		fmt.Printf("Insert Key: ")
+		pass, err = term.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			return "", err
+		}
+	} else {
+		reader := bufio.NewReader(os.Stdin)
+		pass, err = reader.ReadBytes('\n')
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return strings.TrimRight(string(pass), "\n"), nil
+}
+
+func insertKey() int {
+	key, err := ReadKey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error while reading key: %v\n", err)
+		return 1
+	}
+
+	switch {
+	case strings.HasPrefix(key, KeyPrefixX25519):
+	case strings.HasPrefix(key, KeyPrefixHybrid):
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown identity type\n")
+		return 1
+	}
+
+	KeyID, err := ks.Store(key)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to store key in keystore: %v\n", err)
+	}
+
+	fmt.Printf("Key %s inserted\n", KeyID)
+
 	return 0
 }
 

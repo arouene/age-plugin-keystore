@@ -35,8 +35,7 @@ const (
 var ErrKeyNotFound = errors.New("key not found in keystore")
 var ErrSecretEmpty = errors.New("Secret is empty")
 
-// secretStruct represents the Secret structure used by the Secret Service API.
-// Format: (session, parameters, value, content_type)
+// Secret represents the Secret structure used by the Secret Service API.
 type Secret struct {
 	Session     dbus.ObjectPath
 	Parameters  []byte

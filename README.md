@@ -148,6 +148,15 @@ This will delete the stored key in your keystore.
 age-plugin-keystore -d YOUR_KEY_ID
 ```
 
+### Add an existing Key to as Keystore
+
+For backup / restore purpose, you can pass an age key to the stdin with option
+`-i`, the plugin will store the key into the keystore.
+
+```bash
+echo -n 'AGE-SECRET-KEY-1...' | age-plugin-keystore -i
+```
+
 ## Security Considerations
 
 - **Private Key Storage**: Private keys are stored in a Keyring, implementation
