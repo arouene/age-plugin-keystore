@@ -271,7 +271,7 @@ func deleteKey(keyID string) int {
 	return 0
 }
 
-// ReadPassword is a wrapper around term.ReadPassword, it reads the password
+// ReadKey is a wrapper around term.ReadPassword, it reads the password
 // input without echoing characters to the terminal.
 func ReadKey() (string, error) {
 	var pass []byte

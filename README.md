@@ -150,12 +150,22 @@ age-plugin-keystore -d YOUR_KEY_ID
 
 ### Add an existing Key to as Keystore
 
-For backup / restore purpose, you can pass an age key to the stdin with option
-`-i`, the plugin will store the key into the keystore.
+For backup / restore purpose, you can pass an existing age key to the stdin with
+the option `-i`, the plugin will store the key into the keystore.
 
 ```bash
 echo -n 'AGE-SECRET-KEY-1...' | age-plugin-keystore -i
+
+# Or
+
+cat my_key_file | age-plugin-keystore -i
+
+# Or with a prompt
+
+age-plugin-keystore -i
 ```
+
+You have to list the keys with `-l` to get the new keystore plugin key identity.
 
 ## Security Considerations
 
